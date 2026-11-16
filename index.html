@@ -63,6 +63,39 @@
     h1 { margin: 0; font-size: clamp(28px, 5vw, 43px); letter-spacing: -.045em; line-height: 1.14; }
     .hero p { color: var(--muted); margin: 11px 0 0; font-size: 13px; line-height: 1.75; }
     .hero-chip { color: #c9d5ff; font-size: 12px; padding: 10px 14px; border-radius: 13px; border: 1px solid var(--line); background: rgba(255,255,255,.035); white-space: nowrap; }
+    .update-frequency-note {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      padding: 13px 16px;
+      border: 1px solid rgba(98,183,255,.22);
+      border-left: 3px solid var(--blue);
+      border-radius: 13px;
+      background: linear-gradient(105deg, rgba(98,183,255,.09), rgba(193,139,255,.055));
+      color: #cbd8f8;
+      font-size: 11px;
+      line-height: 1.75;
+    }
+    .update-frequency-note strong {
+      display: block;
+      margin-bottom: 2px;
+      color: #e5edff;
+      font-size: 11px;
+    }
+    .update-frequency-note p { margin: 0; }
+    .update-frequency-icon {
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      width: 25px;
+      height: 25px;
+      border-radius: 8px;
+      color: #a9d9ff;
+      background: rgba(98,183,255,.13);
+      font-size: 14px;
+      font-weight: 900;
+    }
     .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; margin: 26px 0 22px; }
     .stat { background: linear-gradient(145deg, rgba(28,43,85,.92), rgba(17,26,56,.96)); border: 1px solid var(--line); border-radius: 17px; padding: 16px 18px; box-shadow: var(--shadow); }
     .stat-label { color: var(--muted); font-size: 11px; }
@@ -283,6 +316,13 @@
     </section>
 
     <section class="layout" id="valueLayout">
+      <aside class="update-frequency-note" aria-label="価値の更新頻度について">
+        <span class="update-frequency-icon" aria-hidden="true">i</span>
+        <div>
+          <strong>ゲーム内とサイト内の価値は異なる場合があります</strong>
+          <p>ゲーム内の価値は週1回更新されますが、このサイトの価値は原則1日1回更新しています。そのため、更新タイミングの違いにより、ゲーム内の価値とサイト内の価値が一致しないことがよくあります。サイト内の数値は参考値としてご覧ください。</p>
+        </div>
+      </aside>
       <section class="panel">
         <div class="panel-head">
           <div><div class="panel-kicker">CHARACTER LIST</div><h2 class="panel-title">価値一覧</h2></div>
