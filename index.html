@@ -58,6 +58,9 @@
     .trend-stable { color: #cbd5f5; }
     .trend-unstable { color: #ffd38c; border-color: rgba(255,211,140,.28); background: rgba(255,211,140,.08); }
     .trend-down { color: #ffaaa9; border-color: rgba(255,140,140,.28); background: rgba(255,140,140,.08); }
+    .trend-limit { color: #ffe49a; border-color: rgba(255,205,95,.42); background: rgba(255,190,65,.13); }
+    .trend-unstoppable { color: #ffb3a8; border-color: rgba(255,105,105,.42); background: rgba(255,95,105,.16); }
+    .trend-slight-unstable { color: #f4d6a0; border-color: rgba(230,180,100,.28); background: rgba(230,180,100,.09); }
     .hero { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 24px; }
     .eyebrow { color: var(--pink); font-size: 11px; font-weight: 800; letter-spacing: .19em; text-transform: uppercase; margin-bottom: 10px; }
     h1 { margin: 0; font-size: clamp(28px, 5vw, 43px); letter-spacing: -.045em; line-height: 1.14; }
@@ -406,11 +409,14 @@
       <form id="statusForm" class="admin-panel-grid">
         <div class="field"><label for="statusTarget">対象キャラクター</label><input class="field-input" id="statusTarget" type="text" value="スペースイタリア" readonly></div>
         <div class="field"><label for="statusSelect">上昇具合</label><select class="field-input" id="statusSelect">
+          <option value="止められない高速増加中">止められない高速増加中</option>
           <option value="高速増加中">高速増加中</option>
           <option value="増加中">増加中</option>
           <option value="安定">安定</option>
+          <option value="少し不安定">少し不安定</option>
           <option value="不安定">不安定</option>
           <option value="減少中">減少中</option>
+          <option value="限界">限界</option>
         </select></div>
         <button class="primary-btn" type="submit">上昇具合を保存</button>
       </form>
@@ -421,7 +427,7 @@
         <form id="characterAddForm" class="character-add-form">
           <div class="field"><label for="newCharacterName">追加するキャラクター名</label><input class="field-input" id="newCharacterName" type="text" maxlength="40" placeholder="例：ニューイタリア" required></div>
           <div class="field"><label for="newCharacterValue">初期価値</label><input class="field-input" id="newCharacterValue" type="number" min="0" step="1" placeholder="例：1000" required></div>
-          <div class="field"><label for="newCharacterTrend">上昇具合</label><select class="field-input" id="newCharacterTrend"><option value="高速増加中">高速増加中</option><option value="増加中">増加中</option><option value="安定" selected>安定</option><option value="不安定">不安定</option><option value="減少中">減少中</option></select></div>
+          <div class="field"><label for="newCharacterTrend">上昇具合</label><select class="field-input" id="newCharacterTrend"><option value="止められない高速増加中">止められない高速増加中</option><option value="高速増加中">高速増加中</option><option value="増加中">増加中</option><option value="安定" selected>安定</option><option value="少し不安定">少し不安定</option><option value="不安定">不安定</option><option value="減少中">減少中</option><option value="限界">限界</option></select></div>
           <button class="primary-btn" type="submit">＋ キャラを追加</button>
         </form>
         <form id="characterRenameForm" class="character-manage-row">
@@ -485,7 +491,7 @@
     const supabaseClient = window.supabase?.createClient
       ? window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
       : null;
-    const VALID_TRENDS = ["高速増加中", "増加中", "安定", "不安定", "減少中"];
+    const VALID_TRENDS = ["止められない高速増加中", "高速増加中", "増加中", "安定", "少し不安定", "不安定", "減少中", "限界"];
     const TIER_LEVELS = [
       { key: "最強", className: "tier-s" },
       { key: "超強", className: "tier-ss" },
@@ -531,7 +537,7 @@
     const activeCharacters = () => characters.filter(c => !c.archived);
     const getSelected = () => activeCharacters().find(c => c.id === selectedId) || activeCharacters()[0];
     const getTrend = character => VALID_TRENDS.includes(character?.trend) ? character.trend : "安定";
-    const trendClass = trend => ({"高速増加中":"trend-fast", "増加中":"trend-up", "安定":"trend-stable", "不安定":"trend-unstable", "減少中":"trend-down"}[trend] || "trend-stable");
+    const trendClass = trend => ({"止められない高速増加中":"trend-unstoppable", "高速増加中":"trend-fast", "増加中":"trend-up", "安定":"trend-stable", "少し不安定":"trend-slight-unstable", "不安定":"trend-unstable", "減少中":"trend-down", "限界":"trend-limit"}[trend] || "trend-stable");
     const trendBadge = trend => `<span class="trend-badge ${trendClass(trend)}">${escapeHTML(trend)}</span>`;
     const getHistory = id => (histories[id] || []).slice().sort((a,b) => a.date.localeCompare(b.date));
 
