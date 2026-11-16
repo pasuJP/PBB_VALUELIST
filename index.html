@@ -127,6 +127,13 @@
     .admin-panel { border-color: rgba(154,139,255,.28); }
     .admin-panel[hidden], .record-panel[hidden] { display: none !important; }
     .admin-panel-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,.75fr) auto; gap: 9px; align-items: end; margin-top: 14px; }
+    .character-add-section { margin-top: 19px; padding-top: 17px; border-top: 1px solid rgba(184,198,255,.12); }
+    .character-add-title { margin: 0; font-size: 14px; font-weight: 850; }
+    .character-add-form { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(120px,.65fr) minmax(145px,.8fr) auto; gap: 9px; align-items: end; margin-top: 12px; }
+    .character-manage-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 9px; align-items: end; margin-top: 14px; }
+    .danger-btn { border: 1px solid rgba(255,140,140,.28); color: #ffb0b0; background: rgba(255,100,115,.09); border-radius: 11px; padding: 0 14px; min-height: 39px; font-size: 11px; font-weight: 800; }
+    .danger-btn:hover { background: rgba(255,100,115,.17); }
+    .tier-unranked { color: #d9e0fa; background: #64708f; }
     .admin-caption { color: #9ca9ce; font-size: 10px; line-height: 1.65; margin-top: 6px; }
     .admin-modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 18px; background: rgba(3,7,20,.78); backdrop-filter: blur(8px); }
     .admin-modal[hidden] { display: none !important; }
@@ -216,6 +223,10 @@
       .record-form .primary-btn { grid-column: 1 / -1; }
       .admin-panel-grid { grid-template-columns: 1fr 1fr; }
       .admin-panel-grid .primary-btn { grid-column: 1 / -1; }
+      .character-add-form { grid-template-columns: 1fr 1fr; }
+      .character-add-form .primary-btn { grid-column: 1 / -1; }
+      .character-manage-row { grid-template-columns: 1fr 1fr; }
+      .character-manage-row .field { grid-column: 1 / -1; }
     }
     @media (max-width: 420px) {
       .brand-name { font-size: 12px; }
@@ -230,6 +241,8 @@
       td { padding-left: 14px; padding-right: 14px; }
       .selected-info { padding-left: 15px; padding-right: 15px; }
       .history { margin-left: 15px; margin-right: 15px; }
+      .character-add-form, .character-manage-row { grid-template-columns: 1fr; }
+      .character-add-form .primary-btn, .character-manage-row .field { grid-column: auto; }
     }
   </style>
 </head>
@@ -361,6 +374,22 @@
         </select></div>
         <button class="primary-btn" type="submit">上昇具合を保存</button>
       </form>
+      <div class="character-add-section">
+        <div class="panel-kicker">CHARACTER MANAGEMENT</div>
+        <h3 class="character-add-title">キャラクター管理</h3>
+        <p class="admin-caption">新しいキャラクターを追加したり、選択中のキャラクター名を変更・削除したりできます。削除したキャラクターの過去の価値履歴とティア表はアーカイブに残ります。</p>
+        <form id="characterAddForm" class="character-add-form">
+          <div class="field"><label for="newCharacterName">追加するキャラクター名</label><input class="field-input" id="newCharacterName" type="text" maxlength="40" placeholder="例：ニューイタリア" required></div>
+          <div class="field"><label for="newCharacterValue">初期価値</label><input class="field-input" id="newCharacterValue" type="number" min="0" step="1" placeholder="例：1000" required></div>
+          <div class="field"><label for="newCharacterTrend">上昇具合</label><select class="field-input" id="newCharacterTrend"><option value="高速増加中">高速増加中</option><option value="増加中">増加中</option><option value="安定" selected>安定</option><option value="不安定">不安定</option><option value="減少中">減少中</option></select></div>
+          <button class="primary-btn" type="submit">＋ キャラを追加</button>
+        </form>
+        <form id="characterRenameForm" class="character-manage-row">
+          <div class="field"><label for="manageCharacterName">選択中のキャラクター名を変更</label><input class="field-input" id="manageCharacterName" type="text" maxlength="40" required></div>
+          <button class="secondary-btn" type="submit">名前を保存</button>
+          <button class="danger-btn" id="deleteCharacterButton" type="button">選択中のキャラを削除</button>
+        </form>
+      </div>
     </section>
 
     <section class="panel record-panel" id="recordPanel" hidden>
@@ -453,7 +482,8 @@
       const d = new Date();
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     };
-    const getSelected = () => characters.find(c => c.id === selectedId) || characters[0];
+    const activeCharacters = () => characters.filter(c => !c.archived);
+    const getSelected = () => activeCharacters().find(c => c.id === selectedId) || activeCharacters()[0];
     const getTrend = character => VALID_TRENDS.includes(character?.trend) ? character.trend : "安定";
     const trendClass = trend => ({"高速増加中":"trend-fast", "増加中":"trend-up", "安定":"trend-stable", "不安定":"trend-unstable", "減少中":"trend-down"}[trend] || "trend-stable");
     const trendBadge = trend => `<span class="trend-badge ${trendClass(trend)}">${escapeHTML(trend)}</span>`;
@@ -470,11 +500,19 @@
         }
         if (typeof saved.selectedTierSnapshotId === "string") selectedTierSnapshotId = saved.selectedTierSnapshotId;
         if (Array.isArray(saved.characters)) {
-          characters = INITIAL_CHARACTERS.map(base => {
-            const found = saved.characters.find(c => c.id === base.id);
+          const savedById = new Map(saved.characters.filter(c => c && typeof c.id === "string").map(c => [c.id, c]));
+          const baseIds = new Set(INITIAL_CHARACTERS.map(c => c.id));
+          const baseCharacters = INITIAL_CHARACTERS.map(base => {
+            const found = savedById.get(base.id);
             const trend = found && VALID_TRENDS.includes(found.trend) ? found.trend : "安定";
-            return found && Number.isFinite(Number(found.value)) ? {...base, value: Math.max(0, Number(found.value)), trend} : {...base, trend};
+            return found && Number.isFinite(Number(found.value))
+              ? {...base, value: Math.max(0, Number(found.value)), trend, archived: !!found.archived, name: typeof found.name === "string" && found.name.trim() ? found.name.trim().slice(0,40) : base.name}
+              : {...base, trend, archived: !!found?.archived};
           });
+          const addedCharacters = saved.characters
+            .filter(c => c && typeof c.id === "string" && !baseIds.has(c.id) && typeof c.name === "string" && c.name.trim() && Number.isSafeInteger(Number(c.value)) && Number(c.value) >= 0)
+            .map(c => ({id:c.id, name:c.name.trim().slice(0,40), value:Number(c.value), trend:VALID_TRENDS.includes(c.trend)?c.trend:"安定", archived:!!c.archived}));
+          characters = [...baseCharacters, ...addedCharacters];
         }
       } catch (err) {
         console.warn("保存データを読み込めませんでした。初期データを使用します。", err);
@@ -534,27 +572,32 @@
     function renderTierBoard() {
       const snapshot = getSelectedTierSnapshot();
       const assignments = snapshot.assignments || {};
-      $("tierBoard").innerHTML = TIER_LEVELS.map(level => {
-        const members = characters.filter(c => assignments[c.id] === level.key);
+      const archivedMembers = characters.filter(c => Object.prototype.hasOwnProperty.call(assignments, c.id));
+      const rankedRows = TIER_LEVELS.map(level => {
+        const members = archivedMembers.filter(c => assignments[c.id] === level.key);
         return `<div class="tier-row">
           <div class="tier-label ${level.className}">${level.key}</div>
           <div class="tier-members">${members.length ? members.map(c => `<span class="tier-member">${escapeHTML(c.name)}</span>`).join("") : '<span class="tier-empty">キャラクターなし</span>'}</div>
         </div>`;
       }).join("");
+      const assignedIds = new Set(Object.keys(assignments));
+      const unranked = activeCharacters().filter(c => !assignedIds.has(c.id));
+      const unrankedRow = unranked.length ? `<div class="tier-row"><div class="tier-label tier-unranked">未分類</div><div class="tier-members">${unranked.map(c => `<span class="tier-member">${escapeHTML(c.name)}</span>`).join("")}</div></div>` : "";
+      $("tierBoard").innerHTML = rankedRows + unrankedRow;
       const dateLabel = snapshot.label || snapshot.date.replaceAll("-", "/");
-      $("tierArchiveNote").textContent = `${dateLabel} 時点のティア表です。${tierSnapshots.length > 1 ? `保存済みの過去版：全${tierSnapshots.length}件。上のメニューから切り替えられます。` : "新しい版が追加されると、ここから過去の版も選択できます。"}`;
+      $("tierArchiveNote").textContent = `${dateLabel} 時点のティア表です。${unranked.length ? " 未分類には、この版の保存後に追加されたキャラクターが含まれます。" : ""}${tierSnapshots.length > 1 ? `保存済みの過去版：全${tierSnapshots.length}件。上のメニューから切り替えられます。` : "新しい版が追加されると、ここから過去の版も選択できます。"}`;
     }
 
     function loadTierDraftFromSelected() {
       const snapshot = getSelectedTierSnapshot();
       tierDraft = {};
-      characters.forEach(c => { tierDraft[c.id] = TIER_LEVELS.some(t => t.key === snapshot.assignments?.[c.id]) ? snapshot.assignments[c.id] : "激弱"; });
+      activeCharacters().forEach(c => { tierDraft[c.id] = TIER_LEVELS.some(t => t.key === snapshot.assignments?.[c.id]) ? snapshot.assignments[c.id] : "激弱"; });
     }
 
     function renderTierEditor() {
       if (!$("tierEditGrid")) return;
       if (!Object.keys(tierDraft).length) loadTierDraftFromSelected();
-      $("tierEditGrid").innerHTML = characters.map(c => `
+      $("tierEditGrid").innerHTML = activeCharacters().map(c => `
         <label class="tier-edit-row"><span>${escapeHTML(c.name)}</span>
           <select class="field-input" data-tier-character="${escapeHTML(c.id)}">
             ${TIER_LEVELS.map(t => `<option value="${t.key}" ${tierDraft[c.id] === t.key ? "selected" : ""}>${t.key}</option>`).join("")}
@@ -592,16 +635,17 @@
     }
 
     function updateStats() {
-      const highest = characters.reduce((a,b) => b.value > a.value ? b : a, characters[0]);
-      $("statCount").textContent = characters.length;
-      $("statHighest").textContent = numberFormat(highest.value);
-      $("statLeader").textContent = highest.name;
+      const active = activeCharacters();
+      const highest = active.reduce((a,b) => b.value > a.value ? b : a, active[0]);
+      $("statCount").textContent = active.length;
+      $("statHighest").textContent = highest ? numberFormat(highest.value) : "—";
+      $("statLeader").textContent = highest ? highest.name : "—";
     }
 
     function visibleCharacters() {
       const query = $("searchInput").value.trim().toLocaleLowerCase();
       const mode = $("sortSelect").value;
-      const list = characters.filter(c => c.name.toLocaleLowerCase().includes(query));
+      const list = activeCharacters().filter(c => c.name.toLocaleLowerCase().includes(query));
       if (mode === "low") list.sort((a,b) => a.value - b.value || a.name.localeCompare(b.name, "ja"));
       else if (mode === "name") list.sort((a,b) => a.name.localeCompare(b.name, "ja"));
       else list.sort((a,b) => b.value - a.value || a.name.localeCompare(b.name, "ja"));
@@ -632,7 +676,7 @@
     }
 
     function selectCharacter(id) {
-      if (!characters.some(c => c.id === id)) return;
+      if (!activeCharacters().some(c => c.id === id)) return;
       selectedId = id;
       renderTable(); renderSelected();
       $("recordTarget").textContent = getSelected().name;
@@ -648,6 +692,7 @@
       $("recordTarget").textContent = character.name;
       if ($("statusTarget")) $("statusTarget").value = character.name;
       if ($("statusSelect")) $("statusSelect").value = getTrend(character);
+      if ($("manageCharacterName")) $("manageCharacterName").value = character.name;
       renderChart(data);
       renderHistory(data);
     }
@@ -750,7 +795,7 @@
         id: `${date}-${Date.now()}`,
         date,
         label: `${date.replaceAll("-", "/")}${versionCount > 1 ? ` (${versionCount})` : ""}`,
-        assignments: Object.fromEntries(characters.map(c => [c.id, TIER_LEVELS.some(t => t.key === tierDraft[c.id]) ? tierDraft[c.id] : "激弱"]))
+        assignments: Object.fromEntries(activeCharacters().map(c => [c.id, TIER_LEVELS.some(t => t.key === tierDraft[c.id]) ? tierDraft[c.id] : "激弱"]))
       };
       tierSnapshots.push(snapshot);
       selectedTierSnapshotId = snapshot.id;
@@ -801,7 +846,53 @@
       showToast(`${character.name}の上昇具合を「${trend}」に設定しました。`);
     });
 
-    $("searchInput").addEventListener("input", renderTable);
+    $("characterAddForm").addEventListener("submit", event => {
+      event.preventDefault();
+      if (!isAdmin) { showToast("キャラクターの追加には管理者ログインが必要です。"); return; }
+      const name = $("newCharacterName").value.trim();
+      const value = Number($("newCharacterValue").value);
+      const trend = $("newCharacterTrend").value;
+      if (!name || name.length > 40) { showToast("キャラクター名を1〜40文字で入力してください。"); return; }
+      if (characters.some(c => c.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) { showToast("同じ名前のキャラクターがすでに登録されています。"); return; }
+      if (!Number.isSafeInteger(value) || value < 0) { showToast("初期価値は0以上の整数で入力してください。"); return; }
+      if (!VALID_TRENDS.includes(trend)) { showToast("上昇具合を選択してください。"); return; }
+      const id = "custom-" + (window.crypto?.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,9));
+      const character = {id, name, value, trend, archived:false};
+      characters.push(character);
+      selectedId = id;
+      tierDraft[id] = "激弱";
+      $("searchInput").value = "";
+      saveData(); renderTable(); renderSelected(); renderTierPage();
+      $("characterAddForm").reset(); $("newCharacterTrend").value = "安定";
+      showToast(`${name}を価値表に追加しました。`);
+    });
+
+    $("characterRenameForm").addEventListener("submit", event => {
+      event.preventDefault();
+      if (!isAdmin) { showToast("キャラクター名の変更には管理者ログインが必要です。"); return; }
+      const character = getSelected();
+      const name = $("manageCharacterName").value.trim();
+      if (!character || !name || name.length > 40) { showToast("キャラクター名を1〜40文字で入力してください。"); return; }
+      if (characters.some(c => c.id !== character.id && !c.archived && c.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) { showToast("同じ名前のキャラクターがすでに登録されています。"); return; }
+      const oldName = character.name;
+      character.name = name;
+      saveData(); renderTable(); renderSelected(); renderTierPage();
+      showToast(`${oldName}を「${name}」に変更しました。`);
+    });
+
+    $("deleteCharacterButton").addEventListener("click", () => {
+      if (!isAdmin) { showToast("キャラクターの削除には管理者ログインが必要です。"); return; }
+      const character = getSelected();
+      if (!character) return;
+      if (activeCharacters().length <= 1) { showToast("最後の1キャラクターは削除できません。"); return; }
+      if (!window.confirm(`「${character.name}」を現在の価値表から削除しますか？\n過去の価値履歴とティア表の記録は残ります。`)) return;
+      character.archived = true;
+      selectedId = activeCharacters()[0].id;
+      saveData(); renderTable(); renderSelected(); renderTierPage();
+      showToast(`${character.name}を価値表から削除しました。過去データは保存されています。`);
+    });
+
+        $("searchInput").addEventListener("input", renderTable);
     $("sortSelect").addEventListener("change", renderTable);
     $("recordForm").addEventListener("submit", event => {
       event.preventDefault();
