@@ -453,7 +453,7 @@
         <div class="field"><label for="recordValue">価値</label><input class="field-input" id="recordValue" type="number" min="0" step="1" placeholder="例：5400" required></div>
         <button class="primary-btn" type="submit">＋ 記録を追加</button>
       </form>
-      <div class="notice">※ 同じキャラクター・同じ日付の記録を追加した場合、既存の記録を更新します。最新日付の記録が価値一覧にも反映されます。<br>※ データはSupabaseに保存され、すべての利用者・端末で共有されます。編集できるのは登録済みの管理者だけです。</div>
+      <div class="notice">※ 同じキャラクター・同じ日付でも、何度でも記録を追加できます。記録は登録時刻順に並び、グラフにはそれぞれ別の点として反映されます。最新日付の最新記録が価値一覧にも反映されます。<br>※ データはSupabaseに保存され、すべての利用者・端末で共有されます。編集できるのは登録済みの管理者だけです。</div>
     </section>
 
     <footer class="footer">
@@ -545,11 +545,39 @@
     const getTrend = character => VALID_TRENDS.includes(character?.trend) ? character.trend : "安定";
     const trendClass = trend => ({"止められない高速増加中":"trend-unstoppable", "高速増加中":"trend-fast", "増加中":"trend-up", "安定":"trend-stable", "少し不安定":"trend-slight-unstable", "不安定":"trend-unstable", "少し減少中":"trend-slight-down", "減少中":"trend-down", "超減少中":"trend-super-down", "限界":"trend-limit"}[trend] || "trend-stable");
     const trendBadge = trend => `<span class="trend-badge ${trendClass(trend)}">${escapeHTML(trend)}</span>`;
-    const getHistory = id => (histories[id] || []).slice().sort((a,b) => a.date.localeCompare(b.date));
+    const createHistoryId = () => window.crypto?.randomUUID
+      ? crypto.randomUUID()
+      : `history-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;
+    const localTimeString = date => {
+      const d = date || new Date();
+      return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+    };
+    const compareHistory = (a,b) =>
+      a.date.localeCompare(b.date) ||
+      Number(a.createdAt || 0) - Number(b.createdAt || 0) ||
+      String(a.id || "").localeCompare(String(b.id || ""));
+    const getHistory = id => (histories[id] || []).slice().sort(compareHistory);
+
+    // 古い履歴（日付ごとに1件・IDなし）も維持しつつ、個別削除用IDを補う。
+    function normalizeHistories(source) {
+      const result = {};
+      Object.entries(source || {}).forEach(([characterId, entries]) => {
+        if (!Array.isArray(entries)) return;
+        result[characterId] = entries
+          .filter(item => item && typeof item.date === "string" && Number.isFinite(Number(item.value)))
+          .map((item, index) => ({
+            ...item,
+            id: typeof item.id === "string" && item.id ? item.id : `legacy-${characterId}-${item.date}-${index}`,
+            time: typeof item.time === "string" ? item.time : "",
+            createdAt: Number.isFinite(Number(item.createdAt)) ? Number(item.createdAt) : 0
+          }));
+      });
+      return result;
+    }
 
     function applySavedData(saved) {
       if (!saved || typeof saved !== "object") return;
-      if (saved.histories && typeof saved.histories === "object") histories = saved.histories;
+      if (saved.histories && typeof saved.histories === "object") histories = normalizeHistories(saved.histories);
       if (Array.isArray(saved.tierSnapshots) && saved.tierSnapshots.length) {
         tierSnapshots = saved.tierSnapshots.filter(s => s && typeof s.date === "string" && s.assignments && typeof s.assignments === "object");
         if (!tierSnapshots.length) tierSnapshots = [JSON.parse(JSON.stringify(INITIAL_TIER_SNAPSHOT))];
@@ -845,14 +873,20 @@
         const area = `${path} L ${points[points.length-1][0]},${top+plotH} L ${points[0][0]},${top+plotH} Z`;
         markup += `<path d="${area}" fill="url(#areaGradient)"/>`;
         if (data.length > 1) markup += `<path d="${path}" fill="none" stroke="url(#lineGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
+        const sameDateCounts = data.reduce((counts, item) => {
+          counts[item.date] = (counts[item.date] || 0) + 1;
+          return counts;
+        }, {});
         points.forEach((p,i) => {
-          const label = `${data[i].date} · ${numberFormat(data[i].value)}`;
+          const timeLabel = data[i].time ? ` ${data[i].time.slice(0,8)}` : "";
+          const label = `${data[i].date}${timeLabel} · ${numberFormat(data[i].value)}`;
           markup += `<circle cx="${p[0]}" cy="${p[1]}" r="5.5" fill="#f3a1d8" stroke="#1b2149" stroke-width="3"><title>${escapeHTML(label)}</title></circle>`;
         });
         const labelIndices = data.length <= 5 ? data.map((_,i)=>i) : [0, Math.floor((data.length-1)/2), data.length-1];
         labelIndices.forEach(i => {
           const date = data[i].date.slice(5).replace("-", "/");
-          markup += `<text x="${x(i)}" y="${H-17}" fill="#8c9bc1" font-size="10" text-anchor="middle">${date}</text>`;
+          const time = sameDateCounts[data[i].date] > 1 && data[i].time ? ` ${data[i].time.slice(0,5)}` : "";
+          markup += `<text x="${x(i)}" y="${H-17}" fill="#8c9bc1" font-size="10" text-anchor="middle">${date}${time}</text>`;
         });
       }
       svg.innerHTML = markup;
@@ -866,28 +900,36 @@
     }
 
     function renderHistory(data) {
-      const list = data.slice().sort((a,b) => b.date.localeCompare(a.date));
+      const list = data.slice().sort((a,b) => compareHistory(b,a));
       if (!list.length) {
         $("historyList").innerHTML = '<div class="history-empty">記録はまだありません。</div>';
         return;
       }
-      $("historyList").innerHTML = list.map(item => `
+      $("historyList").innerHTML = list.map(item => {
+        const timeLabel = item.time ? ` · ${escapeHTML(item.time)}` : "";
+        const dateLabel = `${escapeHTML(item.date.replaceAll("-", "/"))}${timeLabel}`;
+        return `
         <div class="history-row">
-          <span class="history-date">${escapeHTML(item.date.replaceAll("-", "/"))}</span>
+          <span class="history-date">${dateLabel}</span>
           <span class="history-value">${numberFormat(item.value)}</span>
-          ${isAdmin ? `<button class="delete-record" type="button" data-date="${item.date}" aria-label="${item.date}の記録を削除">削除</button>` : ""}
-        </div>`).join("");
+          ${isAdmin ? `<button class="delete-record" type="button" data-history-id="${escapeHTML(item.id)}" aria-label="${dateLabel}の記録を削除">削除</button>` : ""}
+        </div>`;
+      }).join("");
       $("historyList").querySelectorAll(".delete-record").forEach(button => {
-        button.addEventListener("click", () => deleteHistory(button.dataset.date));
+        button.addEventListener("click", () => deleteHistory(button.dataset.historyId));
       });
     }
 
-    function deleteHistory(date) {
+    function deleteHistory(historyId) {
       if (!isAdmin) { showToast("管理者ログインが必要です。"); return; }
-      const list = getHistory(selectedId).filter(item => item.date !== date);
+      const list = getHistory(selectedId).filter(item => item.id !== historyId);
       histories[selectedId] = list;
-      if (list.length) characters.find(c => c.id === selectedId).value = Number(list[list.length-1].value);
-      else characters.find(c => c.id === selectedId).value = INITIAL_CHARACTERS.find(c => c.id === selectedId).value;
+      if (list.length) {
+        characters.find(c => c.id === selectedId).value = Number(list[list.length-1].value);
+      } else {
+        const initialCharacter = INITIAL_CHARACTERS.find(c => c.id === selectedId);
+        if (initialCharacter) characters.find(c => c.id === selectedId).value = initialCharacter.value;
+      }
       saveData(); renderTable(); renderSelected();
       showToast("記録を削除しました。");
     }
@@ -1044,9 +1086,16 @@
       if (!date || !Number.isSafeInteger(value) || value < 0) {
         showToast("日付と0以上の整数の価値を入力してください。"); return;
       }
-      const list = getHistory(selectedId).filter(item => item.date !== date);
-      list.push({date, value});
-      list.sort((a,b) => a.date.localeCompare(b.date));
+      const now = new Date();
+      const list = getHistory(selectedId);
+      list.push({
+        id: createHistoryId(),
+        date,
+        time: localTimeString(now),
+        createdAt: now.getTime(),
+        value
+      });
+      list.sort(compareHistory);
       histories[selectedId] = list;
       characters.find(c => c.id === selectedId).value = Number(list[list.length-1].value);
       saveData(); renderTable(); renderSelected();
