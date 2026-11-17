@@ -183,6 +183,11 @@
     .login-error { min-height: 17px; color: #ff9eae; font-size: 10px; margin-top: 8px; }
     .record-intro { color: var(--muted); font-size: 10px; line-height: 1.65; margin: 6px 0 14px; }
     .record-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+    .record-save-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:9px; margin-top:10px; color:#9ca9ce; font-size:10px; line-height:1.6; }
+    #recordSaveStatus[data-state="saved"] { color:#8de0b8; }
+    #recordSaveStatus[data-state="error"] { color:#ffaaa9; }
+    #retryRecordSaveButton { min-height:32px; font-size:10px; padding:0 11px; }
+    #retryRecordSaveButton[hidden] { display:none !important; }
     .field label { display: block; color: #aab6d7; font-size: 10px; margin: 0 0 6px 2px; }
     .field-input { padding: 9px 10px; font-size: 11px; min-width: 0; }
     .primary-btn { border: 0; color: #fff; font-size: 11px; font-weight: 800; border-radius: 11px; padding: 0 14px; min-height: 39px; background: linear-gradient(110deg, #6d70f6, #bd72d9); box-shadow: 0 8px 20px rgba(118,105,235,.2); white-space: nowrap; }
@@ -451,8 +456,12 @@
       <form id="recordForm" class="record-form">
         <div class="field"><label for="recordDate">記録日</label><input class="field-input" id="recordDate" type="date" required></div>
         <div class="field"><label for="recordValue">価値</label><input class="field-input" id="recordValue" type="number" min="0" step="1" placeholder="例：5400" required></div>
-        <button class="primary-btn" type="submit">＋ 記録を追加</button>
+        <button class="primary-btn" id="addRecordButton" type="submit">＋ 記録を追加</button>
       </form>
+      <div class="record-save-row">
+        <span id="recordSaveStatus" role="status" aria-live="polite">記録はSupabaseへの保存完了後、ほかの端末にも反映されます。</span>
+        <button class="secondary-btn" id="retryRecordSaveButton" type="button" hidden>クラウド保存を再試行</button>
+      </div>
       <div class="notice">※ 同じキャラクター・同じ日付でも、何度でも記録を追加できます。記録は登録時刻順に並び、グラフにはそれぞれ別の点として反映されます。最新日付の最新記録が価値一覧にも反映されます。<br>※ データはSupabaseに保存され、すべての利用者・端末で共有されます。編集できるのは登録済みの管理者だけです。</div>
     </section>
 
@@ -613,21 +622,44 @@
       }
     }
 
-    function saveData() {
-      const snapshot = getDataSnapshot();
+    async function saveData() {
+      // JSON化して、その瞬間の内容を保存対象として固定する（後続編集に混ざらないようにする）。
+      const snapshot = JSON.parse(JSON.stringify(getDataSnapshot()));
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); }
       catch (err) { console.warn("ローカルキャッシュを保存できませんでした。", err); }
-      if (!isAdmin || !supabaseClient) return Promise.resolve();
-      pendingSave = pendingSave.then(async () => {
-        const { error } = await supabaseClient
-          .from("pbb_site_state")
-          .upsert({id: 1, data: snapshot, updated_at: new Date().toISOString()}, {onConflict: "id"});
-        if (error) throw error;
-      }).catch(err => {
-        console.error("Supabaseへの保存に失敗しました。", err);
-        showToast("クラウド保存に失敗しました。通信状態とSupabase設定を確認してください。");
+      if (!supabaseClient) {
+        console.error("Supabase client is unavailable.");
+        showToast("Supabaseに接続できていません。ページを再読み込みしてください。");
+        return false;
+      }
+      if (!isAdmin) {
+        showToast("管理者ログインが切れているため、クラウド保存できません。");
+        return false;
+      }
+
+      // 保存処理を順番に実行し、前の保存が失敗しても次の保存を止めない。
+      const saveTask = pendingSave.catch(() => {}).then(async () => {
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { error } = await supabaseClient
+            .from("pbb_site_state")
+            .upsert({id: 1, data: snapshot, updated_at: new Date().toISOString()}, {onConflict: "id"});
+          if (!error) return true;
+          lastError = error;
+          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 450 * (attempt + 1)));
+        }
+        throw lastError || new Error("Supabaseへの保存に失敗しました。");
       });
-      return pendingSave;
+      pendingSave = saveTask;
+      try {
+        await saveTask;
+        return true;
+      } catch (err) {
+        console.error("Supabaseへの保存に失敗しました。", err);
+        const detail = err?.message ? ` (${err.message})` : "";
+        showToast(`Supabaseへの保存に失敗しました${detail}`);
+        return false;
+      }
     }
 
     async function loadCloudData() {
@@ -1078,7 +1110,41 @@
 
     $("searchInput").addEventListener("input", renderTable);
     $("sortSelect").addEventListener("change", renderTable);
-    $("recordForm").addEventListener("submit", event => {
+    let lastRecordSavePending = false;
+    async function persistCurrentRecordChange() {
+      const status = $("recordSaveStatus");
+      const retryButton = $("retryRecordSaveButton");
+      status.dataset.state = "saving";
+      status.textContent = "Supabaseに保存中…";
+      retryButton.hidden = true;
+      const saved = await saveData();
+      if (saved) {
+        lastRecordSavePending = false;
+        status.dataset.state = "saved";
+        status.textContent = "Supabaseに保存しました。ほかの端末にも反映されます。";
+        retryButton.hidden = true;
+      } else {
+        lastRecordSavePending = true;
+        status.dataset.state = "error";
+        status.textContent = "クラウド保存できていません。この端末内に一時保存されています。下のボタンで再試行してください。";
+        retryButton.hidden = false;
+      }
+      return saved;
+    }
+
+    $("retryRecordSaveButton").addEventListener("click", async () => {
+      if (!lastRecordSavePending) return;
+      const button = $("retryRecordSaveButton");
+      button.disabled = true;
+      try {
+        const saved = await persistCurrentRecordChange();
+        if (saved) showToast("未保存だった記録をSupabaseに保存しました。");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("recordForm").addEventListener("submit", async event => {
       event.preventDefault();
       if (!isAdmin) { showToast("管理者ログインが必要です。"); return; }
       const date = $("recordDate").value;
@@ -1086,21 +1152,32 @@
       if (!date || !Number.isSafeInteger(value) || value < 0) {
         showToast("日付と0以上の整数の価値を入力してください。"); return;
       }
-      const now = new Date();
-      const list = getHistory(selectedId);
-      list.push({
-        id: createHistoryId(),
-        date,
-        time: localTimeString(now),
-        createdAt: now.getTime(),
-        value
-      });
-      list.sort(compareHistory);
-      histories[selectedId] = list;
-      characters.find(c => c.id === selectedId).value = Number(list[list.length-1].value);
-      saveData(); renderTable(); renderSelected();
-      $("recordValue").value = "";
-      showToast("価値の記録を追加しました。");
+      const addButton = $("addRecordButton");
+      if (addButton.disabled) return;
+      addButton.disabled = true;
+      try {
+        const now = new Date();
+        const list = getHistory(selectedId);
+        list.push({
+          id: createHistoryId(),
+          date,
+          time: localTimeString(now),
+          createdAt: now.getTime(),
+          value
+        });
+        list.sort(compareHistory);
+        histories[selectedId] = list;
+        const latestRecord = list[list.length - 1];
+        characters.find(c => c.id === selectedId).value = Number(latestRecord.value);
+        renderTable(); renderSelected();
+        const saved = await persistCurrentRecordChange();
+        if (saved) {
+          $("recordValue").value = "";
+          showToast("価値の記録をSupabaseに保存しました。");
+        }
+      } finally {
+        addButton.disabled = false;
+      }
     });
 
     loadSavedData();
